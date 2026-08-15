@@ -1,0 +1,136 @@
+name: Build EIT RustDesk Windows
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/build-windows.yml'
+      - 'scripts/**'
+      - 'README.md'
+
+env:
+  RUSTDESK_VERSION: '1.4.9'
+  FLUTTER_VERSION: '3.24.5'
+  LLVM_VERSION: '15.0.6'
+  RUST_VERSION: '1.75'
+  VCPKG_COMMIT_ID: '120deac3062162151622ca4860575a33844ba10b'
+  VCPKG_BINARY_SOURCES: 'clear;x-gha,readwrite'
+
+jobs:
+  build:
+    runs-on: windows-2022
+
+    steps:
+      - name: Checkout EIT build files
+        uses: actions/checkout@v4
+
+      - name: Export GitHub Actions cache variables
+        uses: actions/github-script@v7
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Clone RustDesk source
+        shell: pwsh
+        run: |
+          git clone --branch $env:RUSTDESK_VERSION --depth 1 --recurse-submodules https://github.com/rustdesk/rustdesk.git rustdesk
+          cd rustdesk
+          git submodule update --init --recursive
+
+      - name: Patch EIT server configuration
+        shell: pwsh
+        run: python .\scripts\patch_rustdesk.py .\rustdesk
+
+      - name: Verify embedded constants
+        shell: pwsh
+        run: |
+          $cfg = Get-ChildItem .\rustdesk -Recurse -Filter config.rs | Where-Object { (Get-Content $_.FullName -Raw) -match 'RENDEZVOUS_SERVERS' -and (Get-Content $_.FullName -Raw) -match 'RS_PUB_KEY' } | Select-Object -First 1
+          if (-not $cfg) { throw 'config.rs not found' }
+          Select-String -Path $cfg.FullName -Pattern 'RENDEZVOUS_SERVERS|RS_PUB_KEY|EIT_CUSTOM_CONFIG' | ForEach-Object { $_.Line }
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@v2
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Prepare RustDesk custom Flutter engine
+        shell: pwsh
+        working-directory: rustdesk
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          $flutterRoot = Split-Path -Parent (Split-Path -Parent (Get-Command flutter).Source)
+          $enginePath = Join-Path $flutterRoot 'bin\cache\artifacts\engine\windows-x64-release'
+          Copy-Item -Path '.\windows-x64-release\*' -Destination $enginePath -Recurse -Force
+
+      - name: Apply RustDesk Flutter patch
+        shell: bash
+        working-directory: rustdesk
+        run: |
+          FLUTTER_ROOT=$(dirname $(dirname $(which flutter)))
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$FLUTTER_ROOT/"
+          cd "$FLUTTER_ROOT"
+          git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rustdesk
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install native dependencies
+        shell: bash
+        working-directory: rustdesk
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
+
+      - name: Build RustDesk x64
+        shell: pwsh
+        working-directory: rustdesk
+        run: |
+          python .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+
+      - name: Collect EIT executable
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path .\output | Out-Null
+          $candidates = Get-ChildItem .\rustdesk -Recurse -Filter rustdesk.exe -File | Sort-Object Length -Descending
+          if (-not $candidates) { throw 'rustdesk.exe not found after build' }
+          $exe = $candidates | Select-Object -First 1
+          Write-Host "Using: $($exe.FullName) ($($exe.Length) bytes)"
+          Copy-Item $exe.FullName .\output\EIT-RustDesk.exe -Force
+          Get-FileHash .\output\EIT-RustDesk.exe -Algorithm SHA256 | Format-List
+
+      - name: Upload EIT RustDesk EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: EIT-RustDesk-Windows-x64
+          path: output/EIT-RustDesk.exe
+          if-no-files-found: error
+          retention-days: 30
