@@ -1,4 +1,4 @@
-name: Build EIT RustDesk Windows
+name: Build EIT Desk Windows
 
 on:
   workflow_dispatch:
@@ -140,7 +140,7 @@ jobs:
             Write-Host "Found $f"
           }
 
-      - name: Patch EIT server configuration
+      - name: Apply EIT Desk configuration and branding
         shell: pwsh
         run: python .\scripts\patch_rustdesk.py .\rustdesk
 
@@ -211,32 +211,32 @@ jobs:
         run: |
           "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"
 
-      - name: Build RustDesk x64
+      - name: Build EIT Desk x64
         shell: pwsh
         working-directory: rustdesk
         run: |
           python .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
 
-      - name: Collect EIT executable
+      - name: Collect EIT Desk executable
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path .\output | Out-Null
-          $preferred = '.\rustdesk\flutter\build\windows\x64\runner\Release\rustdesk.exe'
+          $preferred = '.\rustdesk\flutter\build\windows\x64\runner\Release\EITDesk.exe'
           if (Test-Path $preferred) {
             $exe = Get-Item $preferred
           } else {
-            $candidates = Get-ChildItem .\rustdesk -Recurse -Filter rustdesk.exe -File | Sort-Object Length -Descending
-            if (-not $candidates) { throw 'rustdesk.exe not found after build' }
+            $candidates = Get-ChildItem .\rustdesk -Recurse -Filter EITDesk.exe -File | Sort-Object Length -Descending
+            if (-not $candidates) { throw 'EITDesk.exe not found after build' }
             $exe = $candidates | Select-Object -First 1
           }
           Write-Host "Using: $($exe.FullName) ($($exe.Length) bytes)"
-          Copy-Item $exe.FullName .\output\EIT-RustDesk.exe -Force
-          Get-FileHash .\output\EIT-RustDesk.exe -Algorithm SHA256 | Format-List
+          Copy-Item $exe.FullName .\output\EITDesk.exe -Force
+          Get-FileHash .\output\EITDesk.exe -Algorithm SHA256 | Format-List
 
-      - name: Upload EIT RustDesk EXE
+      - name: Upload EIT Desk EXE
         uses: actions/upload-artifact@v4
         with:
-          name: EIT-RustDesk-Windows-x64
-          path: output/EIT-RustDesk.exe
+          name: EITDesk-Windows-x64
+          path: output/EITDesk.exe
           if-no-files-found: error
           retention-days: 30
