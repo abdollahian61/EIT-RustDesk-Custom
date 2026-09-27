@@ -216,25 +216,26 @@ jobs:
         shell: pwsh
         working-directory: rustdesk
         run: |
-          python .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+          python .\build.py --portable --flutter --hwcodec --vram
 
-      - name: Collect EIT Desk executable
+      - name: Verify and collect portable EIT Desk installer
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path .\output | Out-Null
-          $preferred = '.\rustdesk\flutter\build\windows\x64\runner\Release\EITDesk.exe'
-          if (Test-Path $preferred) {
-            $exe = Get-Item $preferred
-          } else {
-            $candidates = Get-ChildItem .\rustdesk -Recurse -Filter EITDesk.exe -File | Sort-Object Length -Descending
-            if (-not $candidates) { throw 'EITDesk.exe not found after build' }
-            $exe = $candidates | Select-Object -First 1
+          $release = '.\\rustdesk\\flutter\\build\\windows\\x64\\runner\\Release'
+          $required = @('EITDesk.exe', 'desktop_drop_plugin.dll', 'flutter_windows.dll', 'data\\icudtl.dat')
+          foreach ($file in $required) {
+            if (-not (Test-Path (Join-Path $release $file))) {
+              throw "Missing Windows release dependency: $file"
+            }
           }
-          Write-Host "Using: $($exe.FullName) ($($exe.Length) bytes)"
-          Copy-Item $exe.FullName .\output\EITDesk.exe -Force
-          Get-FileHash .\output\EITDesk.exe -Algorithm SHA256 | Format-List
+          $installer = '.\\rustdesk\\EITDesk.exe'
+          if (-not (Test-Path $installer)) { throw 'Portable EITDesk.exe was not generated' }
+          if ((Get-Item $installer).Length -lt 10MB) { throw 'Portable installer is unexpectedly small' }
+          New-Item -ItemType Directory -Force -Path .\\output | Out-Null
+          Copy-Item $installer .\\output\\EITDesk.exe -Force
+          Get-FileHash .\\output\\EITDesk.exe -Algorithm SHA256 | Format-List
 
-      - name: Upload EIT Desk EXE
+      - name: Upload complete EIT Desk installer
         uses: actions/upload-artifact@v4
         with:
           name: EITDesk-Windows-x64
