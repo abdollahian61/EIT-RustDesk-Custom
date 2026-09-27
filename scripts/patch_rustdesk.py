@@ -84,6 +84,24 @@ for destination in (root / "flutter/windows/runner/resources/app_icon.ico", root
     destination.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(icon_source, destination)
 
+# The Flutter runner needs its DLLs and data directory. Package them into
+# RustDesk's portable Windows installer and brand the packer's file metadata.
+build_py = root / "build.py"
+replace_exact(build_py, "flutter_build_dir_2}/rustdesk.exe", "flutter_build_dir_2}/EITDesk.exe")
+replace_exact(build_py, "f'./rustdesk-{version}-install.exe'", "'./EITDesk.exe'")
+
+portable_cargo = root / "libs/portable/Cargo.toml"
+replace_exact(portable_cargo, 'ProductName = "RustDesk"', f'ProductName = "{APP_NAME}"')
+replace_exact(portable_cargo, 'OriginalFilename = "rustdesk.exe"', f'OriginalFilename = "{EXE_NAME}.exe"')
+replace_exact(portable_cargo, 'FileDescription = "RustDesk Remote Desktop"', f'FileDescription = "{APP_NAME} Remote Desktop"')
+
+portable_main = root / "libs/portable/src/main.rs"
+replace_exact(
+    portable_main,
+    'arg_exe.to_lowercase().ends_with("install.exe")',
+    'arg_exe.to_lowercase().ends_with("eitdesk.exe")',
+)
+
 print(f"Patched configuration: {target}")
 print(f"Product name: {APP_NAME}")
 print(f"Windows executable: {EXE_NAME}.exe")
