@@ -77,6 +77,35 @@ runner_rc.write_text(rc, encoding="utf-8")
 main_cpp = root / "flutter/windows/runner/main.cpp"
 replace_exact(main_cpp, 'std::wstring app_name = L"RustDesk";', f'std::wstring app_name = L"{APP_NAME}";')
 
+# Keep the display name with a space, but use the actual EITDesk.exe
+# everywhere Windows resolves or manages the installed executable.
+windows_rs = root / "src/platform/windows.rs"
+replace_exact(
+    windows_rs,
+    r'let exe = format!("{}\\{}.exe", path, crate::get_app_name());',
+    f'let exe = format!("{{}}\\\\{EXE_NAME}.exe", path);',
+)
+replace_exact(
+    windows_rs,
+    'let app_name = crate::get_app_name().to_lowercase();\n'
+    '    if src_exe_filename.to_lowercase() == format!("{app_name}.exe")',
+    f'let app_name = "{EXE_NAME}".to_lowercase();\n'
+    '    if src_exe_filename.to_lowercase() == format!("{app_name}.exe")',
+)
+replace_exact(
+    windows_rs,
+    'let app_exe_name = &format!("{}.exe", &app_name);',
+    f'let app_exe_name = &format!("{{}}.exe", "{EXE_NAME}");',
+)
+windows_text = windows_rs.read_text(encoding="utf-8")
+old_kill = 'taskkill /F /IM {app_name}.exe{filter}'
+if windows_text.count(old_kill) != 4:
+    raise SystemExit(f"Expected four process cleanup commands, found {windows_text.count(old_kill)}")
+windows_rs.write_text(
+    windows_text.replace(old_kill, f'taskkill /F /IM {EXE_NAME}.exe{{filter}}'),
+    encoding="utf-8",
+)
+
 icon_source = assets / "EITDesk.ico"
 if not icon_source.is_file():
     raise SystemExit(f"Missing EIT icon: {icon_source}")
